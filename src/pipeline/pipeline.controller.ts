@@ -463,6 +463,7 @@ export class PipelineController {
 						Logger.debug(
 							`S${ma.arc}E${String(me.episode).padStart(2, '0')}${Context?.pipeline?.getReport()?.percentageString()} - Extended present`,
 						)
+						await Context.torrent.reseedFile(me.files.extended, file)
 						if (!this.config.PIPELINE_SKIP_ORGANIZE_PRESENT_FILES) {
 							await this.organizeFile(ma.arc, me.episode)
 						} else if (
@@ -507,6 +508,7 @@ export class PipelineController {
 						Logger.debug(
 							`S${ma.arc}E${String(me.episode).padStart(2, '0')}${Context?.pipeline?.getReport()?.percentageString()} - Standard present`,
 						)
+						await Context.torrent.reseedFile(me.files.standard, file)
 						if (!this.config.PIPELINE_SKIP_ORGANIZE_PRESENT_FILES) {
 							await this.organizeFile(ma.arc, me.episode)
 						} else if (
@@ -544,6 +546,7 @@ export class PipelineController {
 					Logger.debug(
 						`S${ma.arc}E${String(me.episode).padStart(2, '0')}${Context?.pipeline?.getReport()?.percentageString()} - Standard present`,
 					)
+					await Context.torrent.reseedFile(me.files.standard, file)
 					if (!this.config.PIPELINE_SKIP_ORGANIZE_PRESENT_FILES) {
 						await this.organizeFile(ma.arc, me.episode)
 					} else if (!this.config.PIPELINE_SKIP_UPDATE_METADATA_PRESENT_FILES) {

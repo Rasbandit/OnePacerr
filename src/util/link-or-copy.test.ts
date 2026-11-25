@@ -59,6 +59,18 @@ describe('Link or copy', () => {
 		},
 	)
 
+	it('Should throw instead of copying when copy is not allowed', async () => {
+		vi.mocked(link).mockRejectedValueOnce(
+			Object.assign(new Error('cross-device link'), { code: 'EXDEV' }),
+		)
+
+		await expect(
+			linkOrCopyFile(source, destination, { allowCopy: false }),
+		).rejects.toThrow()
+
+		expect(readdirSync(dir)).toEqual(['source.mkv'])
+	})
+
 	it('Should rethrow errors that are not a hardlink limitation', async () => {
 		vi.mocked(link).mockRejectedValueOnce(
 			Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }),

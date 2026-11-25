@@ -43,3 +43,47 @@ describe('PipelineController.process CRC check', () => {
 		},
 	)
 })
+
+describe('PipelineController.process reseed', () => {
+	it.each([
+		['standard', false, { standard: { CRC32: 'AAAA1111' } }],
+		[
+			'standard',
+			false,
+			{ standard: { CRC32: 'AAAA1111' }, extended: { CRC32: 'X' } },
+		],
+		[
+			'extended',
+			true,
+			{ standard: { CRC32: 'X' }, extended: { CRC32: 'AAAA1111' } },
+		],
+	])(
+		'offers the matching %s file for reseeding (prefer extended %s)',
+		async (variant, preferExtended, files: any) => {
+			const controller = new PipelineController({
+				PIPELINE_PREFER_EXTENDED: preferExtended,
+				PIPELINE_SKIP_ORGANIZE_PRESENT_FILES: true,
+				PIPELINE_SKIP_UPDATE_METADATA_PRESENT_FILES: true,
+			} as any) as any
+			controller.report = {
+				processedEpisodes: 0,
+				firstRun: true,
+				percentageString: () => '',
+			}
+			;(Context as any).pipeline = controller
+			;(Context as any).metadata = { getEpisode: async () => ({}) }
+			;(Context as any).library = {
+				getExistingLibraryEpisodeFile: async () => '/library/file.mkv',
+			}
+			const reseedFile = vi.fn(async () => 'added')
+			;(Context as any).torrent = { reseedFile }
+
+			await controller.process({ arc: 1 }, { episode: 1, files })
+
+			expect(reseedFile).toHaveBeenCalledWith(
+				files[variant],
+				'/library/file.mkv',
+			)
+		},
+	)
+})

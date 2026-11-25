@@ -10,13 +10,14 @@ const COPY_FALLBACK_CODES = ['EXDEV', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EMLINK']
 export default async function linkOrCopyFile(
 	source: string,
 	destination: string,
+	{ allowCopy = true }: { allowCopy?: boolean } = {},
 ) {
 	let temp = `${destination}.onepacerr-tmp-${randomUUID()}`
 	try {
 		await link(source, temp)
 	} catch (e) {
 		let code = (e as NodeJS.ErrnoException)?.code || ''
-		if (!COPY_FALLBACK_CODES.includes(code)) {
+		if (!allowCopy || !COPY_FALLBACK_CODES.includes(code)) {
 			Logger.error(`Error Linking '${source}' -> '${destination}'`)
 			Logger.error(e)
 			throw e

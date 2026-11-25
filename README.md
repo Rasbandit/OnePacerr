@@ -327,6 +327,7 @@ Here is a breakdown of key optional variables you can adjust in your
 | 🍏 `PIPELINE_SKIP_DOWNLOADS_IMPORTS` | `false` | If `true`, skips updating posters when updating metadata. |
 | `PIPELINE_FORCE_REDOWNLOAD` | `false` | If `true`, downloads and imports files even if already present. |
 | `PIPELINE_FORCE_REIMPORT_EXISTING` | `false` | If `true`, when an episode that already exists is downloaded again, it reimports it overwriting the file. |
+| `PIPELINE_RESEED_PRESENT_FILES` | `false` | If `true`, verified library files that no torrent seeds are hardlinked back to the download folder and seeded without re-downloading (qBittorrent 4.5+). |
 | `PIPELINE_SKIP_POSTERS` | `false` | If `true`, skips updating posters when updating metadata. |
 | --- | --- | --- |
 | `PIPELINE_INCLUDE_SPECIALS` | `false` | Set to `true` to also process specials. |

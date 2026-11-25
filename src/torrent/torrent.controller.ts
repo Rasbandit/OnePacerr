@@ -29,6 +29,7 @@ import { UTorrentController } from './clients/utorrent.controller.js'
 import {
 	ITorrentController,
 	QueueDownloadResult,
+	RESEED_TAG,
 	Torrent,
 	TorrentClient,
 	TorrentConnectionError,
@@ -57,6 +58,20 @@ function isAlreadyImported(source: string, destination: string): boolean {
 		return false
 	}
 }
+
+/** True when both paths are hardlinks to the same inode */
+function isSameFile(a: string, b: string): boolean {
+	try {
+		const aStat = statSync(a)
+		const bStat = statSync(b)
+		return aStat.ino === bStat.ino && aStat.dev === bStat.dev
+	} catch {
+		return false
+	}
+}
+
+/** Seconds a reseed may sit unverified before it is abandoned */
+const RESEED_TIMEOUT = 24 * 3600
 
 export class TorrentController {
 	private client: ITorrentController
@@ -147,6 +162,13 @@ export class TorrentController {
 		}
 
 		try {
+			await this.processReseeds()
+		} catch (e) {
+			Logger.error(`Reseed check error, will retry...`)
+			Logger.error(e)
+		}
+
+		try {
 			await this.processCompletedTorrents()
 		} catch (e) {
 			Logger.error(
@@ -194,6 +216,148 @@ export class TorrentController {
 
 		await this.client.addTorrent(torrentInfo, environment.TORRENT_CATEGORY)
 		return 'added'
+	}
+
+	/**
+	 * Seeds an episode already in the library without downloading it again:
+	 * hardlinks the library file into the client's save folder under the
+	 * torrent's file name, then adds the torrent so the client hash-checks it.
+	 * When it completes, the import sees the same inode and skips it.
+	 */
+	public async reseedFile(
+		torrentInfo: FileMetadata,
+		libraryFile: string,
+	): Promise<QueueDownloadResult> {
+		try {
+			return await this.tryReseedFile(torrentInfo, libraryFile)
+		} catch (e) {
+			// Reseeding is a bonus, it must never break organize/metadata steps
+			Logger.warn(
+				`Reseed failed for '${libraryFile}': ${(e as Error)?.message}...`,
+			)
+			return 'skipped'
+		}
+	}
+
+	private async tryReseedFile(
+		torrentInfo: FileMetadata,
+		libraryFile: string,
+	): Promise<QueueDownloadResult> {
+		if (
+			!environment.PIPELINE_RESEED_PRESENT_FILES ||
+			environment.PIPELINE_SKIP_DOWNLOADS
+		)
+			return 'skipped'
+
+		const fileName = torrentInfo?.magnetURI
+			? new URLSearchParams(torrentInfo.magnetURI.split('?')[1] || '').get('dn')
+			: null
+		if (torrentInfo?.partOfBundle || !torrentInfo?.hash || !fileName) {
+			Logger.debug(
+				`Reseed skipped for '${libraryFile}': not a single-file torrent...`,
+			)
+			return 'skipped'
+		}
+
+		let torrents = await this.client.getAllTorrents()
+		if (torrents.find(t => sameHash(t.hash, torrentInfo.hash)))
+			return 'already_present'
+
+		if (!this.client.getSavePath) {
+			Logger.debug(`Reseed not supported for ${this.client.torrentClient}...`)
+			return 'skipped'
+		}
+		const savePath = await this.client.getSavePath(environment.TORRENT_CATEGORY)
+		// basename: dn comes from remote metadata, never let it escape the folder
+		const seedFile = path.join(
+			this.mapDownloadPath(savePath),
+			path.basename(fileName),
+		)
+
+		if (existsSync(seedFile) && !isSameFile(libraryFile, seedFile)) {
+			Logger.warn(`Reseed skipped: '${seedFile}' exists with other content...`)
+			return 'skipped'
+		}
+		try {
+			await linkOrCopyFile(libraryFile, seedFile, { allowCopy: false })
+		} catch (e) {
+			Logger.warn(
+				`Reseed skipped: cannot hardlink '${libraryFile}' -> '${seedFile}' (${(e as NodeJS.ErrnoException)?.code})...`,
+			)
+			return 'skipped'
+		}
+
+		const added = await this.client.addTorrent(
+			torrentInfo,
+			environment.TORRENT_CATEGORY,
+			savePath,
+		)
+		if (!added) {
+			unlinkSync(seedFile)
+			Logger.warn(`Reseed skipped: client rejected '${fileName}'...`)
+			return 'skipped'
+		}
+		this.reseeds.set(torrentInfo.hash.toLowerCase(), { libraryFile })
+		Logger.info(
+			`Reseeding '${fileName}' from library file, awaiting recheck...`,
+		)
+		return 'added'
+	}
+
+	/** Reseeds added by this process: library file and forced recheck sent */
+	private reseeds = new Map<
+		string,
+		{ libraryFile: string; rechecked?: boolean }
+	>()
+
+	/**
+	 * Reseeded torrents stop once metadata arrives. Then force one recheck and
+	 * resume only at 100%. Under 100% after the recheck, or unverified after
+	 * RESEED_TIMEOUT, remove the torrent without its files and unlink the seed
+	 * hardlink, so torrent data that disagrees with a CRC32 match never
+	 * downloads over the library file.
+	 */
+	private async processReseeds() {
+		if (!environment.PIPELINE_RESEED_PRESENT_FILES || !this.client.startTorrent)
+			return
+		const pending = (await this.client.getAllTorrents()).filter(t =>
+			t.tags?.split(',').some(tag => tag.trim() === RESEED_TAG),
+		)
+		for (const t of pending) {
+			const state = t.state || ''
+			const stopped = /^(paused|stopped)/.test(state)
+			const reseed = this.reseeds.get(t.hash.toLowerCase())
+
+			if (t.progress >= 1) {
+				if (stopped) {
+					await this.client.startTorrent(t.hash)
+					this.reseeds.delete(t.hash.toLowerCase())
+					Logger.info(`Reseed verified, seeding '${t.name || t.hash}'...`)
+				}
+			} else if (
+				Date.now() / 1000 - (t.added_on ?? Infinity) >
+				RESEED_TIMEOUT
+			) {
+				await this.abandonReseed(t, 'timed out')
+			} else if (!stopped || !(t.size > 0)) {
+				continue // fetching metadata or checking
+			} else if (!reseed?.rechecked) {
+				this.reseeds.set(t.hash.toLowerCase(), { ...reseed, rechecked: true })
+				await this.client.recheckTorrent(t.hash)
+			} else {
+				await this.abandonReseed(t, 'failed verification')
+			}
+		}
+	}
+
+	private async abandonReseed(t: Torrent, reason: string) {
+		await this.client.removeTorrent(t.hash, false)
+		const libraryFile = this.reseeds.get(t.hash.toLowerCase())?.libraryFile
+		this.reseeds.delete(t.hash.toLowerCase())
+		const seedFile = this.mapDownloadPath(t.content_path)
+		// Only delete what is provably our hardlink of the library file
+		if (libraryFile && isSameFile(libraryFile, seedFile)) unlinkSync(seedFile)
+		Logger.warn(`Reseed of '${t.name || t.hash}' ${reason}, torrent removed...`)
 	}
 
 	private async processCompletedTorrents() {
