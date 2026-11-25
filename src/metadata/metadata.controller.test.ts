@@ -117,3 +117,20 @@ describe('MetadataController', () => {
 		await update
 	})
 })
+
+describe('MetadataController.findEpisodeByHash', () => {
+	it('matches hashes case-insensitively', () => {
+		const controller = new MetadataController() as any
+		controller.checkMetadataDownloaded = () => {}
+		controller.metadata = {
+			arcs: [
+				{
+					arc: 1,
+					episodes: [{ episode: 1, files: { standard: { hash: 'ABCDEF' } } }],
+				},
+			],
+		}
+
+		expect(controller.findEpisodeByHash('abcdef').episode).toBe(1)
+	})
+})

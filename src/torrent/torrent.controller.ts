@@ -21,6 +21,7 @@ import getFileCrc32Hash from '../util/crc32.js'
 import { Filter } from '../util/filters.js'
 import linkOrCopyFile from '../util/link-or-copy.js'
 import safeCopyFileSync from '../util/safe-copy-file.js'
+import sameHash from '../util/same-hash.js'
 import { DelugeController } from './clients/deluge.controller.js'
 import { qBittorrentController } from './clients/qbittorrent.controller.js'
 import { TransmissionController } from './clients/transmission.controller.js'
@@ -172,7 +173,7 @@ export class TorrentController {
 		let torrents = await this.client.getAllTorrents(
 			environment.TORRENT_CATEGORY,
 		)
-		if (torrents.find(t => t.hash === torrentInfo.hash)) {
+		if (torrents.find(t => sameHash(t.hash, torrentInfo.hash))) {
 			Logger.debug(`Torrent already in ${this.client.torrentClient}...`)
 			return 'already_present'
 		}

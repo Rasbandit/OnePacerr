@@ -8,6 +8,7 @@ import { deepDiff } from '../util/diff.js'
 import { Filter } from '../util/filters.js'
 import resolveSeasonPosterFileName from '../util/resolve-season-poster-filename.js'
 import resolveSeriesRootFolder from '../util/resolve-series-root-folder.js'
+import sameHash from '../util/same-hash.js'
 import {
 	ArcMetadata,
 	CRCNotInMetadata,
@@ -289,13 +290,15 @@ export class MetadataController {
 		let _found = structuredClone(this.metadata).arcs.find(a => {
 			const _found = a.episodes.find(
 				e =>
-					(e.files?.standard?.hash == hash &&
+					(sameHash(e.files?.standard?.hash, hash) &&
 						!e.files?.standard.partOfBundle) ||
-					(e.files?.extended?.hash == hash &&
+					(sameHash(e.files?.extended?.hash, hash) &&
 						!e.files?.extended.partOfBundle) ||
-					(e.files?.alternate?.hash == hash &&
+					(sameHash(e.files?.alternate?.hash, hash) &&
 						!e.files?.alternate.partOfBundle) ||
-					!!e.files?.archived?.find(a => a.hash == hash && !a.partOfBundle),
+					!!e.files?.archived?.find(
+						a => sameHash(a.hash, hash) && !a.partOfBundle,
+					),
 			)
 			if (_found) {
 				a.episodes = [_found]

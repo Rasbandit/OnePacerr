@@ -6,6 +6,7 @@ import {
 import { Logger } from 'ez-ts-logger'
 import environment from '../../environment.js'
 import { FileMetadata } from '../../metadata/metadata.model.js'
+import sameHash from '../../util/same-hash.js'
 import {
 	ITorrentController,
 	Torrent,
@@ -34,8 +35,8 @@ export class qBittorrentController implements ITorrentController {
 		torrentInfo: FileMetadata,
 		category: string,
 	): Promise<boolean> {
-		let torrent = (await this.getAllTorrents()).find(
-			t => t.hash === torrentInfo.hash,
+		let torrent = (await this.getAllTorrents()).find(t =>
+			sameHash(t.hash, torrentInfo.hash),
 		)
 		if (torrent) {
 			Logger.debug(`MagnetURI already in qBittorrent...`)
