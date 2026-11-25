@@ -2,6 +2,7 @@ import {
 	linkSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -118,5 +119,90 @@ describe('Torrent import', () => {
 			torrent,
 			environment.TORRENT_CATEGORY_ONCE_COMPLETED,
 		)
+	})
+
+	it('Leaves an episode on disk alone when only importing missing files', async () => {
+		writeFileSync(source, 'new version')
+		writeFileSync(destination, 'version on disk')
+
+		await (
+			controller as unknown as {
+				importTorrentFiles: (
+					t: Torrent,
+					onlyIfMissing: boolean,
+				) => Promise<void>
+			}
+		).importTorrentFiles(torrent, true)
+
+		expect(readFileSync(destination, 'utf8')).toBe('version on disk')
+		expect(updatemetadata).not.toHaveBeenCalled()
+	})
+})
+
+describe('Queue download', () => {
+	const info = {
+		CRC32,
+		hash: 'ABCDEF',
+		magnetURI: 'magnet:?xt=urn:btih:abcdef',
+		duration: 1,
+	}
+	let controller: TorrentController
+	let client: Record<string, ReturnType<typeof vi.fn> | string>
+	let importTorrentFiles: ReturnType<typeof vi.fn>
+
+	beforeEach(() => {
+		environment.PIPELINE_SKIP_DOWNLOADS = false
+		client = {
+			torrentClient: 'qbittorrent',
+			getAllTorrents: vi.fn(),
+			addTorrent: vi.fn().mockResolvedValue(true),
+		}
+		controller = new TorrentController()
+		;(controller as unknown as { client: unknown }).client = client
+		importTorrentFiles = vi.fn().mockResolvedValue(undefined)
+		;(
+			controller as unknown as { importTorrentFiles: unknown }
+		).importTorrentFiles = importTorrentFiles
+	})
+
+	it('Imports a completed torrent already in the client', async () => {
+		const existing = { hash: 'abcdef', content_path: '/x', progress: 1 }
+		;(client.getAllTorrents as ReturnType<typeof vi.fn>).mockResolvedValue([
+			existing,
+		])
+
+		expect(await controller.queueDownload(info)).toBe('already_present')
+		expect(importTorrentFiles).toHaveBeenCalledWith(existing, true)
+		expect(client.addTorrent).not.toHaveBeenCalled()
+	})
+
+	it('Does not throw when importing the existing torrent fails', async () => {
+		;(client.getAllTorrents as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ hash: 'abcdef', content_path: '/elsewhere', progress: 1 },
+		])
+		importTorrentFiles.mockRejectedValue(new Error('ENOENT'))
+
+		expect(await controller.queueDownload(info)).toBe('already_present')
+	})
+
+	it('Ignores torrents in unrelated categories', async () => {
+		;(client.getAllTorrents as ReturnType<typeof vi.fn>).mockImplementation(
+			async (category?: string) =>
+				category
+					? []
+					: [{ hash: 'abcdef', content_path: '/x', progress: 1 }],
+		)
+
+		expect(await controller.queueDownload(info)).toBe('added')
+		expect(importTorrentFiles).not.toHaveBeenCalled()
+	})
+
+	it('Leaves an incomplete torrent already in the client alone', async () => {
+		;(client.getAllTorrents as ReturnType<typeof vi.fn>).mockResolvedValue([
+			{ hash: 'abcdef', content_path: '/x', progress: 0.5 },
+		])
+
+		expect(await controller.queueDownload(info)).toBe('already_present')
+		expect(importTorrentFiles).not.toHaveBeenCalled()
 	})
 })

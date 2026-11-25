@@ -170,11 +170,25 @@ export class TorrentController {
 		}
 
 		Logger.debug(`Adding magnetURI to ${this.client.torrentClient}...`)
-		let torrents = await this.client.getAllTorrents(
-			environment.TORRENT_CATEGORY,
-		)
-		if (torrents.find(t => sameHash(t.hash, torrentInfo.hash))) {
+		let torrents = [
+			...(await this.client.getAllTorrents(environment.TORRENT_CATEGORY)),
+			...(await this.client.getAllTorrents(
+				environment.TORRENT_CATEGORY_ONCE_COMPLETED,
+			)),
+		]
+		let existing = torrents.find(t => sameHash(t.hash, torrentInfo.hash))
+		if (existing) {
 			Logger.debug(`Torrent already in ${this.client.torrentClient}...`)
+			// Already downloaded but never imported (or the library file was lost since)
+			if (existing.progress >= 1) {
+				try {
+					await this.importTorrentFiles(existing, true)
+				} catch (e) {
+					Logger.warn(
+						`Could not import existing torrent '${existing.name || existing.hash}': ${(e as Error)?.message}...`,
+					)
+				}
+			}
 			return 'already_present'
 		}
 
@@ -241,7 +255,7 @@ export class TorrentController {
 	}
 
 	//TODO refactor this method to be more maintainable
-	private async importTorrentFiles(torrent: Torrent) {
+	private async importTorrentFiles(torrent: Torrent, onlyIfMissing = false) {
 		const contentPath = this.mapDownloadPath(
 			this.resolveTorrentContentPath(torrent),
 		)
@@ -385,6 +399,16 @@ export class TorrentController {
 			Logger.debug(
 				`File for S${String(episode.arc).padStart(2, '0')}-${String(episode.episode).padStart(2, '0')} detected`,
 			)
+
+			if (
+				onlyIfMissing &&
+				(previousLibraryFileName || existsSync(destination))
+			) {
+				Logger.debug(
+					`File for S${String(episode.arc).padStart(2, '0')}-${String(episode.episode).padStart(2, '0')} exists on disk, skipping import...`,
+				)
+				continue
+			}
 
 			if (
 				!environment.PIPELINE_FORCE_REIMPORT_EXISTING &&
